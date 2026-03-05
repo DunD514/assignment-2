@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Two Sample T-Test Calculator</title>
+
+<style>
+body{
+    font-family: Arial;
+    background:#f5f5f5;
+    padding:40px;
+}
+
+.container{
+    width:500px;
+    margin:auto;
+    background:white;
+    padding:30px;
+    border-radius:10px;
+    box-shadow:0 0 10px rgba(0,0,0,0.2);
+}
+
+h1{
+    text-align:center;
+}
+
+input, select{
+    width:100%;
+    padding:10px;
+    margin-top:10px;
+    margin-bottom:20px;
+}
+
+button{
+    width:100%;
+    padding:12px;
+    background:#007BFF;
+    color:white;
+    border:none;
+    border-radius:5px;
+    font-size:16px;
+}
+
+button:hover{
+    background:#0056b3;
+}
+
+.result{
+    margin-top:20px;
+    background:#eee;
+    padding:15px;
+    border-radius:5px;
+}
+</style>
+
+</head>
+
+<body>
+
+<div class="container">
+
+<h1>Two Sample T-Test</h1>
+
+<label>Sample A (comma separated)</label>
+<input id="sampleA" placeholder="Example: 10,12,14,15">
+
+<label>Sample B (comma separated)</label>
+<input id="sampleB" placeholder="Example: 8,9,11,10">
+
+<label>Alternative Hypothesis</label>
+<select id="alternative">
+<option value="two-sided">Two-sided</option>
+<option value="left">Left</option>
+<option value="right">Right</option>
+</select>
+
+<button onclick="runTest()">Run Test</button>
+
+<div class="result" id="output"></div>
+
+</div>
+
+<script>
+
+async function runTest(){
+
+let a = document.getElementById("sampleA").value
+            .split(",")
+            .map(Number)
+
+let b = document.getElementById("sampleB").value
+            .split(",")
+            .map(Number)
+
+let alternative = document.getElementById("alternative").value
+
+const response = await fetch("/ttest",{
+method:"POST",
+headers:{
+"Content-Type":"application/json"
+},
+body:JSON.stringify({
+sampleA:a,
+sampleB:b,
+alternative:alternative
+})
+})
+
+const data = await response.json()
+
+document.getElementById("output").innerHTML =
+`
+<b>T value:</b> ${data.t_value}<br>
+<b>P value:</b> ${data.p_value}
+`
+
+}
+
+</script>
+
+</body>
+</html>
