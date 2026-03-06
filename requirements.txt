@@ -4,3 +4,4 @@ gunicorn
 eventlet
 pandas
 openpyxl
+psycopg2-binary
