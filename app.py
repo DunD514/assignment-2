@@ -1,3 +1,6 @@
+import eventlet
+eventlet.monkey_patch()
+
 from flask import Flask, render_template_string
 from flask_socketio import SocketIO, emit
 import pandas as pd
@@ -5,7 +8,14 @@ import psycopg2
 import os
 
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
+
+socketio = SocketIO(
+    app,
+    cors_allowed_origins="*",
+    async_mode="eventlet",
+    ping_timeout=60,
+    ping_interval=25
+)
 
 # Connect to Render PostgreSQL
 DATABASE_URL ='postgresql://ipl_auction_db_cusl_user:cGeaQvFN6VJj2h5mS2TNPyR6XxVXEOQG@dpg-d6l7i2s50q8c73bo4b6g-a/ipl_auction_db_cusl'
@@ -25,6 +35,7 @@ CREATE TABLE IF NOT EXISTS players(
     role TEXT
 )
 """)
+
 conn.commit()
 
 # Import players from Excel if DB empty
@@ -32,9 +43,14 @@ cur.execute("SELECT COUNT(*) FROM players")
 count = cur.fetchone()[0]
 
 if count == 0:
+
     df = pd.read_excel("players.xlsx")
 
+    # remove hidden spaces in column names
+    df.columns = df.columns.str.strip()
+
     for _, row in df.iterrows():
+
         cur.execute("""
         INSERT INTO players(name,price,runs,wickets,matches,role)
         VALUES(%s,%s,%s,%s,%s,%s)
@@ -55,11 +71,13 @@ if count == 0:
 def get_players():
 
     cur.execute("SELECT name,price,runs,wickets,matches,role FROM players")
+
     rows = cur.fetchall()
 
     players = {}
 
     for r in rows:
+
         players[r[0]] = {
             "price": r[1],
             "runs": r[2],
@@ -173,11 +191,9 @@ font-size:18px;
 <td id="status_{{p}}">Waiting</td>
 
 <td>
-
 <button class="btn btn-success btn-sm" onclick="bid('{{p}}')">
 Bid
 </button>
-
 </td>
 
 </tr>
@@ -196,7 +212,8 @@ Bid
 <script>
 
 var socket = io({
-    transports:["websocket","polling"]
+    transports:["websocket"],
+    upgrade:false
 });
 
 
@@ -242,54 +259,7 @@ socket.on("error",function(data){
 alert(data.msg);
 });
 
-
-// SEARCH
-
-document.getElementById("search").addEventListener("keyup",function(){
-
-let filter = this.value.toLowerCase();
-
-let rows = document.querySelectorAll("#playerTable tr");
-
-rows.forEach(function(row){
-
-let name = row.children[0].innerText.toLowerCase();
-
-row.style.display = name.includes(filter) ? "" : "none";
-
-});
-
-});
-
-
-// ROLE FILTER
-
-document.getElementById("roleFilter").addEventListener("change",function(){
-
-let role = this.value;
-
-let rows = document.querySelectorAll("#playerTable tr");
-
-rows.forEach(function(row){
-
-let r = row.getAttribute("data-role");
-
-if(role=="all" || r==role){
-
-row.style.display="";
-
-}else{
-
-row.style.display="none";
-
-}
-
-});
-
-});
-
 </script>
-
 
 </body>
 </html>
@@ -299,7 +269,9 @@ row.style.display="none";
 
 @app.route("/")
 def home():
+
     players = get_players()
+
     return render_template_string(html, players=players)
 
 
@@ -331,9 +303,10 @@ def handle_bid(data):
         emit("error",{"msg":"Bid must be higher than current price"})
 
 
-if __name__ == "__main__":
-   import os
+# Run server
 
 if __name__ == "__main__":
+
     port = int(os.environ.get("PORT", 10000))
+
     socketio.run(app, host="0.0.0.0", port=port)
