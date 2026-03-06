@@ -1,5 +1,6 @@
 import eventlet
 eventlet.monkey_patch()
+import random  # For made-up stats
 
 from flask import Flask, render_template_string, request, redirect, url_for, session, flash
 from flask_socketio import SocketIO, emit
@@ -90,6 +91,29 @@ def get_players():
         }
     return players
 
+def generate_made_up_stats(role):
+    """Generate random but realistic made-up stats based on role"""
+    stats = {
+        "batting_average": random.randint(25, 55),
+        "strike_rate": random.randint(110, 165),
+        "bowling_economy": round(random.uniform(5.5, 9.5), 2),
+        "best_batting_score": random.randint(50, 200),
+        "best_bowling_figures": f"{random.randint(3, 8)}/{random.randint(20, 50)}",
+        "fielding_catches": random.randint(10, 50),
+        "recent_form": random.choice(["Excellent", "Good", "Average", "Poor"]),
+        "auction_notes": random.choice([
+            "Explosive opener with power-hitting ability.",
+            "Consistent middle-order anchor.",
+            "Death-over specialist bowler.",
+            "Versatile all-rounder who can bat and bowl.",
+            "Reliable wicketkeeper with safe hands."
+        ])
+    }
+    if role == "Bowler":
+        stats["batting_average"] = random.randint(5, 15)
+        stats["strike_rate"] = random.randint(80, 120)
+    return stats
+
 def login_required(f):
     def wrap(*args, **kwargs):
         if 'user_id' not in session:
@@ -165,6 +189,23 @@ def auction():
     players = get_players()
     return render_template_string(AUCTION_HTML, players=players, username=session['username'])
 
+@app.route('/player/<name>')
+@login_required
+def player_detail(name):
+    players = get_players()
+    if name not in players:
+        flash('Player not found.', 'error')
+        return redirect(url_for('auction'))
+    
+    player = players[name]
+    made_up_stats = generate_made_up_stats(player['role'])
+    
+    return render_template_string(PLAYER_DETAIL_HTML, 
+                                  name=name, 
+                                  player=player, 
+                                  stats=made_up_stats, 
+                                  username=session['username'])
+
 # SocketIO Events
 @socketio.on("place_bid")
 def handle_bid(data):
@@ -207,7 +248,7 @@ def handle_bid(data):
     cur.close()
     conn.close()
 
-# HTML Templates
+# HTML Templates (Fixed filter and bid JS issues)
 SIGNUP_HTML = """
 <!DOCTYPE html>
 <html lang="en">
@@ -342,6 +383,8 @@ AUCTION_HTML = """
         .auction-card { background: rgba(30, 41, 59, 0.95); backdrop-filter: blur(10px); border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); overflow: hidden; }
         .player-row { transition: all 0.3s ease; cursor: pointer; border-left: 4px solid transparent; }
         .player-row:hover { background: var(--hover); transform: translateX(5px); border-left-color: var(--primary); }
+        .player-name { color: var(--primary); text-decoration: none; }
+        .player-name:hover { text-decoration: underline; }
         .price { font-weight: bold; color: var(--primary); font-size: 1.2rem; transition: all 0.3s; }
         .price.animate { animation: pulse 0.5s ease-in-out; }
         @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.2); color: #84cc16; } 100% { transform: scale(1); } }
@@ -426,11 +469,11 @@ AUCTION_HTML = """
                     <tbody id="playerTable">
                         {% for p in players %}
                         <tr class="player-row" data-role="{{players[p]['role']}}" data-name="{{p}}">
-                            <td><strong>{{p}}</strong></td>
-                            <td><i class="fas role-icon role-{{players[p]['role'].lower().replace(' ', '-')}}"></i>{{players[p]["role"]}}</td>
+                            <td><a href="{{ url_for('player_detail', name=p) }}" class="player-name"><strong>{{p}}</strong></a></td>
+                            <td><i class="fas role-icon role-{{players[p]['role'].lower().replace(' ', '-').replace('-', '')}}"></i>{{players[p]["role"]}}</td>
                             <td><span class="stats-badge">{{players[p]["runs"]}}</span></td>
-                            <td><span class="stats-badge">{{players[p]["wickets"]}}</td>
-                            <td><span class="stats-badge">{{players[p]["matches"]}}</td>
+                            <td><span class="stats-badge">{{players[p]["wickets"]}}</span></td>
+                            <td><span class="stats-badge">{{players[p]["matches"]}}</span></td>
                             <td class="price" id="price_{{p}}">₹{{players[p]["price"]}}</td>
                             <td class="status" id="status_{{p}}"><span class="badge bg-secondary">Waiting</span></td>
                             <td>
@@ -479,19 +522,27 @@ AUCTION_HTML = """
             currentPlayer = player;
             document.getElementById('modalPlayer').textContent = player;
             document.getElementById('modalCurrentPrice').textContent = '₹' + currentPrice;
-            document.getElementById('bidAmount').value = currentPrice + 100; // Suggest next bid
-            document.getElementById('bidAmount').min = currentPrice + 1;
+            const bidInput = document.getElementById('bidAmount');
+            bidInput.value = currentPrice + 100; // Suggest next bid
+            bidInput.min = currentPrice + 1;
             modal.show();
         }
 
         function submitBid() {
-            const bid = document.getElementById('bidAmount').value;
-            if (!bid || bid <= parseInt(document.getElementById('modalCurrentPrice').textContent.replace('₹', ''))) {
+            const bidValue = document.getElementById('bidAmount').value;
+            if (!bidValue) {
+                alert('Please enter a bid amount.');
+                return;
+            }
+            const bid = parseInt(bidValue);
+            const current = parseInt(document.getElementById('modalCurrentPrice').textContent.replace('₹', ''));
+            if (bid <= current) {
                 alert('Bid must be higher than current price!');
                 return;
             }
             socket.emit("place_bid", {player: currentPlayer, bid: bid});
             modal.hide();
+            document.getElementById('bidAmount').value = ''; // Clear input
         }
 
         socket.on("price_update", function(data) {
@@ -508,75 +559,165 @@ AUCTION_HTML = """
                     statusCell.innerHTML = '<span class="badge bg-secondary">Waiting</span>';
                 }, 3000);
             }
-            // Play sound (push boundaries - simple beep)
-            const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhB4H/9u2Y2Q=='); // Base64 beep sound
-            audio.play().catch(() => {}); // Ignore if no audio support
+            // Play sound
+            const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhB4H/9u2Y2Q==');
+            audio.play().catch(() => {});
         });
 
         socket.on("error", function(data) {
             alert(data.msg);
         });
 
-        // Enhanced Search (with debounce)
+        // Fixed Filter (with console logging for debug)
         let searchTimeout;
         document.getElementById("search").addEventListener("input", function() {
             clearTimeout(searchTimeout);
-            searchTimeout = setTimeout(() => filterTable(), 300);
+            searchTimeout = setTimeout(filterTable, 300);
         });
 
-        // Role Filter
         document.getElementById("roleFilter").addEventListener("change", filterTable);
 
         function filterTable() {
-            const filter = document.getElementById("search").value.toLowerCase();
-            const role = document.getElementById("roleFilter").value;
+            const filterText = document.getElementById("search").value.toLowerCase();
+            const selectedRole = document.getElementById("roleFilter").value;
             const rows = document.querySelectorAll("#playerTable tr");
+            let visibleCount = 0;
             rows.forEach(function(row) {
-                const name = row.dataset.name.toLowerCase();
-                const r = row.dataset.role;
-                const show = (name.includes(filter) || filter === '') && (role === 'all' || r === role);
-                row.style.display = show ? '' : 'none';
+                const playerName = row.dataset.name.toLowerCase();
+                const playerRole = row.dataset.role;
+                const matchesSearch = playerName.includes(filterText);
+                const matchesRole = selectedRole === 'all' || playerRole === selectedRole;
+                const shouldShow = matchesSearch && matchesRole;
+                row.style.display = shouldShow ? '' : 'none';
+                if (shouldShow) visibleCount++;
             });
+            console.log(`Filtered to ${visibleCount} players`); // Debug log
         }
 
         function refreshPlayers() {
-            location.reload(); // Simple refresh for now
+            location.reload();
         }
 
         // Auto-hide flashes
         setTimeout(() => {
-            document.querySelectorAll('.flash').forEach(el => el.style.transition = 'opacity 0.5s'; el.style.opacity = '0');
+            document.querySelectorAll('.flash').forEach(el => {
+                el.style.transition = 'opacity 0.5s';
+                el.style.opacity = '0';
+            });
         }, 5000);
 
-        // Confetti on high bid (push boundaries - simple JS confetti)
+        // Confetti on high bid
         function celebrateBid() {
-            // Simple confetti (no external lib)
             for (let i = 0; i < 50; i++) {
                 const confetti = document.createElement('div');
-                confetti.style.position = 'fixed';
-                confetti.style.left = Math.random() * 100 + 'vw';
-                confetti.style.top = '-10px';
-                confetti.style.width = '10px';
-                confetti.style.height = '10px';
-                confetti.style.background = `hsl(${Math.random() * 360}, 100%, 50%)`;
-                confetti.style.pointerEvents = 'none';
-                confetti.style.zIndex = '9999';
-                confetti.style.animation = 'fall 3s linear forwards';
+                confetti.style.cssText = `
+                    position: fixed; left: ${Math.random() * 100}vw; top: -10px; 
+                    width: 10px; height: 10px; background: hsl(${Math.random() * 360}, 100%, 50%);
+                    pointer-events: none; z-index: 9999; animation: fall 3s linear forwards;
+                `;
                 document.body.appendChild(confetti);
                 setTimeout(() => confetti.remove(), 3000);
             }
         }
-        const style = document.createElement('style');
-        style.textContent = '@keyframes fall { to { transform: translateY(100vh) rotate(360deg); opacity: 0; } }';
-        document.head.appendChild(style);
+        const fallStyle = document.createElement('style');
+        fallStyle.textContent = '@keyframes fall { to { transform: translateY(100vh) rotate(360deg); opacity: 0; } }';
+        document.head.appendChild(fallStyle);
 
-        // Trigger confetti on new high bid (if it's a big jump)
+        let lastPrices = {}; // Track prices for big jump detection
         socket.on("price_update", function(data) {
-            // ... existing code ...
-            const oldPrice = parseInt(document.getElementById('price_' + data.player)?.textContent.replace('₹', '') || 0);
-            if (data.price > oldPrice * 1.5) celebrateBid(); // Big jump!
+            // ... existing code above ...
+            const oldPrice = lastPrices[data.player] || parseInt(document.getElementById('price_' + data.player)?.textContent.replace('₹', '') || 0);
+            lastPrices[data.player] = data.price;
+            if (data.price > oldPrice * 1.5) celebrateBid();
         });
+
+        // Initial filter call (in case of pre-filled search)
+        filterTable();
     </script>
+</body>
+</html>
+"""
+
+PLAYER_DETAIL_HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ name }} - IPL Auction</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root { --primary: #22c55e; --bg: #0f172a; --card: #1e293b; }
+        body { background: linear-gradient(135deg, var(--bg) 0%, var(--card) 100%); color: white; font-family: 'Segoe UI', sans-serif; }
+        .header { background: rgba(30, 41, 59, 0.95); backdrop-filter: blur(20px); padding: 1rem 0; border-bottom: 1px solid #334155; }
+        .player-card { background: rgba(30, 41, 59, 0.95); backdrop-filter: blur(10px); border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); margin: 2rem 0; }
+        .stat-badge { background: rgba(34, 197, 94, 0.2); color: var(--primary); border: 1px solid var(--primary); border-radius: 10px; padding: 5px 10px; margin: 5px; display: inline-block; }
+        .bid-section { background: var(--primary); color: white; border-radius: 15px; padding: 1.5rem; text-align: center; }
+        .back-btn { background: none; border: 1px solid #475569; color: white; border-radius: 20px; padding: 10px 20px; transition: all 0.3s; }
+        .back-btn:hover { background: #475569; transform: translateY(-2px); }
+        .role-icon-large { font-size: 3rem; color: var(--primary); }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <div class="d-flex justify-content-between align-items-center">
+                <a href="{{ url_for('auction') }}" class="back-btn"><i class="fas fa-arrow-left"></i> Back to Auction</a>
+                <h1><i class="fas fa-user"></i> Player Details</h1>
+                <div class="user-info">
+                    <span>Welcome, {{ username }}!</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="player-card p-4">
+            <div class="row">
+                <div class="col-md-4 text-center">
+                    <div class="role-icon-large">
+                        {% if player.role == 'Batsman' %}<i class="fas fa-baseball-ball"></i>
+                        {% elif player.role == 'Bowler' %}<i class="fas fa-bowling-ball"></i>
+                        {% elif player.role == 'All-rounder' %}<i class="fas fa-handshake"></i>
+                        {% else %}<i class="fas fa-gloves"></i>{% endif %}
+                    </div>
+                    <h2 class="mt-3">{{ name }}</h2>
+                    <p class="text-muted">{{ player.role }}</p>
+                </div>
+                <div class="col-md-8">
+                    <h4>Core Stats</h4>
+                    <div class="row">
+                        <div class="col-md-3"><span class="stat-badge">Runs: {{ player.runs }}</span></div>
+                        <div class="col-md-3"><span class="stat-badge">Wickets: {{ player.wickets }}</span></div>
+                        <div class="col-md-3"><span class="stat-badge">Matches: {{ player.matches }}</span></div>
+                        <div class="col-md-3"><span class="stat-badge">Price: ₹{{ player.price }}</span></div>
+                    </div>
+                </div>
+            </div>
+            <hr>
+            <h4>Made-Up Advanced Stats</h4>
+            <div class="row">
+                <div class="col-md-6">
+                    <p><strong>Batting Average:</strong> {{ stats.batting_average }}</p>
+                    <p><strong>Strike Rate:</strong> {{ stats.strike_rate }}%</p>
+                    <p><strong>Best Batting Score:</strong> {{ stats.best_batting_score }}</p>
+                </div>
+                <div class="col-md-6">
+                    <p><strong>Bowling Economy:</strong> {{ stats.bowling_economy }}</p>
+                    <p><strong>Best Bowling Figures:</strong> {{ stats.best_bowling_figures }}</p>
+                    <p><strong>Fielding Catches:</strong> {{ stats.fielding_catches }}</p>
+                </div>
+            </div>
+            <p><strong>Recent Form:</strong> {{ stats.recent_form }}</p>
+            <p><em>{{ stats.auction_notes }}</em></p>
+            <hr>
+            <div class="bid-section">
+                <h5>Current Auction Price: ₹{{ player.price }}</h5>
+                <button class="btn btn-light" onclick="window.location.href='{{ url_for('auction') }}#price_{{ name }}'">Go Back & Bid</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
 """
