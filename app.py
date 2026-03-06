@@ -1,3 +1,6 @@
+import eventlet
+eventlet.monkey_patch()
+
 from flask import Flask, render_template_string
 from flask_socketio import SocketIO, emit
 import pandas as pd
@@ -109,3 +112,4 @@ def handle_bid(data):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     socketio.run(app, host="0.0.0.0", port=port, debug=False)
+
